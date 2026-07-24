@@ -10,7 +10,7 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
-    TARGETED_DEVICE_FAMILY: "1"
+    TARGETED_DEVICE_FAMILY: "1,2"
     ENABLE_BITCODE: NO
     ENABLE_USER_SCRIPT_SANDBOXING: NO
     SWIFT_EMIT_LOC_STRINGS: NO
@@ -39,7 +39,9 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.zacharyahmed.telemetryprobe
         PRODUCT_NAME: Probe
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        CODE_SIGN_ENTITLEMENTS: Probe/Probe.entitlements
+        # No CODE_SIGN_ENTITLEMENTS here on purpose: CI builds unsigned and
+        # then ad-hoc signs one copy per tier from app/entitlements/, so the
+        # entitlement set is a packaging decision, not a build-time one.
     dependencies:
       - sdk: HealthKit.framework
       - sdk: CoreMotion.framework

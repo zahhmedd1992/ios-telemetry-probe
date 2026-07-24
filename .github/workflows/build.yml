@@ -109,9 +109,9 @@ jobs:
           }
 
           package unsigned ""
-          package tier0 "Probe/Probe.entitlements"
-          package tier1 "Probe/Probe-tier1.entitlements"
-          package tier2 "Probe/Probe-tier2.entitlements"
+          package tier0 "entitlements/tier0.entitlements"
+          package tier1 "entitlements/tier1.entitlements"
+          package tier2 "entitlements/tier2.entitlements"
 
           ls -lh ../out
 
