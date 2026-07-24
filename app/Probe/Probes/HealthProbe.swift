@@ -1514,11 +1514,23 @@ struct HealthProbe: TelemetryProbe {
                 if r.start > newest { newest = r.start }
                 totalSeconds += r.duration
             }
-            let breakdown = counts
-                .map { (HealthProbeWorkoutNames.byRawValue[$0.key] ?? "activityType(\($0.key))", $0.value) }
-                .sorted { $0.1 == $1.1 ? $0.0 < $1.0 : $0.1 > $1.1 }
-                .map { "\($0.0)=\($0.1)" }
-                .joined(separator: ", ")
+            // Written out longhand on purpose: the fluent map/sorted/map/joined
+            // chain over a tuple of (String, Int) blows the Swift type checker's
+            // time budget and fails to compile.
+            var namedCounts: [(name: String, count: Int)] = []
+            for (raw, n) in counts {
+                let nm = HealthProbeWorkoutNames.byRawValue[raw] ?? "activityType(\(raw))"
+                namedCounts.append((name: nm, count: n))
+            }
+            namedCounts.sort { a, b in
+                if a.count == b.count { return a.name < b.name }
+                return a.count > b.count
+            }
+            var breakdownParts: [String] = []
+            for pair in namedCounts {
+                breakdownParts.append("\(pair.name)=\(pair.count)")
+            }
+            let breakdown = breakdownParts.joined(separator: ", ")
 
             var extra: [String: String] = [
                 "workoutCount": capped ? "\(ProbeEnv.int(rows.count))+ (capped at \(ProbeEnv.int(cap)))"

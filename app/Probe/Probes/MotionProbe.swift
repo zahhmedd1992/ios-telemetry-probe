@@ -1189,7 +1189,7 @@ struct MotionProbe: TelemetryProbe {
                 return r
             }
             r.listWasNil = false
-            let iterator = NSFastEnumerationIterator(list)
+            var iterator = NSFastEnumerationIterator(list)   // `next()` is mutating
             while let obj = iterator.next() {
                 guard let d = obj as? CMRecordedAccelerometerData else { continue }
                 r.count += 1

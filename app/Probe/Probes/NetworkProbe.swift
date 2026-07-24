@@ -138,7 +138,10 @@ struct NetworkProbePathSnapshot: Sendable {
     var usesLoopback: Bool
     var usesOther: Bool
 
-    init(_ p: NWPath) {
+    // MUST be qualified. NetworkExtension also exports a (deprecated) `NWPath`
+    // class, so with both frameworks imported the bare name is ambiguous and
+    // every `.wifi` / `.cellular` member lookup below fails to infer its base.
+    init(_ p: Network.NWPath) {
         status = String(describing: p.status)
         // String(describing:) rather than a switch: NWPath.UnsatisfiedReason has
         // grown cases in 14.2, 16 and 17, and a switch would either warn or go

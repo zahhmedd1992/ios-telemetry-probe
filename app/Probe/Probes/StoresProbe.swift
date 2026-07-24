@@ -1146,8 +1146,14 @@ struct StoresProbe: TelemetryProbe {
         let histReq = CNChangeHistoryFetchRequest()
         histReq.startingToken = nil   // nil = full history: a reset, then one add per contact
         do {
-            let result = try store.enumerator(for: histReq)
-            let tokenAfter = result.currentHistoryToken
+            // `enumeratorForChangeHistoryFetchRequest:error:` is NS_REFINED_FOR_SWIFT,
+            // so the plain `enumerator(for:)` spelling is marked unavailable and the
+            // raw selector is surfaced under the double-underscore name instead.
+            let result = try store.__enumerator(for: histReq)
+            // Widened to optional deliberately: CNFetchResult.currentHistoryToken is
+            // non-optional Data, but every downstream check below treats a missing
+            // token as a real state, so keep one shape for both.
+            let tokenAfter: Data? = result.currentHistoryToken
             histExtra["fetchResultTokenPresent"] = tokenAfter == nil ? "false" : "true"
             histExtra["fetchResultTokenBytes"] = "\(tokenAfter?.count ?? 0)"
 

@@ -7,6 +7,37 @@ import UserNotifications
 import Darwin
 import os
 
+/// `notify_register_check`, `notify_get_state` and `notify_cancel` are public
+/// libSystem C API, but `notify.h` is not in any module map Swift can see on
+/// iOS, so the symbols are invisible to the compiler. Resolving them through
+/// `dlsym` against RTLD_DEFAULT is public API and keeps the lock-state read —
+/// a genuinely useful attention signal — instead of dropping it.
+///
+/// Every entry point is optional. If a symbol ever disappears, the probe
+/// reports the capability as unavailable rather than failing to build.
+private enum DeviceProbeNotifyShim {
+    typealias RegisterCheckFn = @convention(c) (UnsafePointer<CChar>?, UnsafeMutablePointer<Int32>?) -> UInt32
+    typealias GetStateFn      = @convention(c) (Int32, UnsafeMutablePointer<UInt64>?) -> UInt32
+    typealias CancelFn        = @convention(c) (Int32) -> UInt32
+
+    /// RTLD_DEFAULT — not exposed to Swift, so use its documented value.
+    private static let rtldDefault = UnsafeMutableRawPointer(bitPattern: -2)
+
+    private static func symbol<T>(_ name: String) -> T? {
+        guard let p = dlsym(rtldDefault, name) else { return nil }
+        return unsafeBitCast(p, to: T.self)
+    }
+
+    static let registerCheck: RegisterCheckFn? = symbol("notify_register_check")
+    static let getState:      GetStateFn?      = symbol("notify_get_state")
+    static let cancel:        CancelFn?        = symbol("notify_cancel")
+
+    /// Sentinel for "we could not even call it" — distinct from any real
+    /// NOTIFY_STATUS_* value, all of which are small.
+    static let unresolved: UInt32 = .max
+    static var resolved: Bool { registerCheck != nil && getState != nil }
+}
+
 // MARK: - DeviceProbe
 //
 // "Device & System State" = everything the phone will tell us about ITSELF with
@@ -1398,18 +1429,24 @@ extension DeviceProbe {
         var lockStateValue: UInt64 = 0
         var lockStateGetStatus: UInt32 = 0
 
-        let regStatus = DeviceProbeLedger.lockStateName.withCString { cs in
-            notify_register_check(cs, &lockStateToken)
+        let regStatus = DeviceProbeLedger.lockStateName.withCString { cs -> UInt32 in
+            guard let fn = DeviceProbeNotifyShim.registerCheck else {
+                return DeviceProbeNotifyShim.unresolved
+            }
+            return fn(cs, &lockStateToken)
         }
         // 0 == NOTIFY_STATUS_OK. The constant is a #define in notify.h and is not
         // exposed to Swift, so we compare against the literal and record the raw
         // number rather than referencing a symbol that may not exist.
-        if regStatus == 0 {
-            lockStateGetStatus = notify_get_state(lockStateToken, &lockStateValue)
+        if regStatus == 0, let getState = DeviceProbeNotifyShim.getState {
+            lockStateGetStatus = getState(lockStateToken, &lockStateValue)
         }
 
-        let regCompleteStatus = DeviceProbeLedger.lockCompleteName.withCString { cs in
-            notify_register_check(cs, &lockCompleteToken)
+        let regCompleteStatus = DeviceProbeLedger.lockCompleteName.withCString { cs -> UInt32 in
+            guard let fn = DeviceProbeNotifyShim.registerCheck else {
+                return DeviceProbeNotifyShim.unresolved
+            }
+            return fn(cs, &lockCompleteToken)
         }
 
         let lockStateCount = DeviceProbeLedger.count(DeviceProbeLedger.kLockState)
@@ -1492,8 +1529,10 @@ extension DeviceProbe {
         ))
 
         // Release the check tokens; the persistent CF observer is what stays armed.
-        if regStatus == 0 { _ = notify_cancel(lockStateToken) }
-        if regCompleteStatus == 0 { _ = notify_cancel(lockCompleteToken) }
+        if let cancel = DeviceProbeNotifyShim.cancel {
+            if regStatus == 0 { _ = cancel(lockStateToken) }
+            if regCompleteStatus == 0 { _ = cancel(lockCompleteToken) }
+        }
 
         return items
     }
