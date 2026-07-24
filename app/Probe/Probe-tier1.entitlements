@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  TIER 1 — the capabilities widely believed to require the $99
+	  Apple Developer Program. This variant exists to settle that
+	  question empirically rather than by argument on forums.
+
+	  HealthKit is the single most valuable stream in the whole app.
+	  App Groups is load-bearing for any future app extension, because
+	  an extension has no other way to hand data to the host app.
+	-->
+	<key>get-task-allow</key>
+	<false/>
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.access</key>
+	<array/>
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.zacharyahmed.telemetryprobe</string>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,169 @@
+name: Probe
+options:
+  bundleIdPrefix: com.zacharyahmed
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    SWIFT_STRICT_CONCURRENCY: minimal
+    TARGETED_DEVICE_FAMILY: "1"
+    ENABLE_BITCODE: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+    SWIFT_EMIT_LOC_STRINGS: NO
+    GENERATE_INFOPLIST_FILE: NO
+    ALWAYS_SEARCH_USER_PATHS: NO
+    CLANG_ENABLE_MODULES: YES
+    MARKETING_VERSION: "0.1"
+    CURRENT_PROJECT_VERSION: "1"
+    # Signing is deliberately disabled here. CI builds unsigned, then
+    # ad-hoc signs a second copy so entitlements are embedded in the
+    # code signature for Sideloadly to inspect and re-provision.
+    CODE_SIGN_STYLE: Manual
+    CODE_SIGN_IDENTITY: ""
+    CODE_SIGNING_REQUIRED: NO
+    CODE_SIGNING_ALLOWED: NO
+    DEVELOPMENT_TEAM: ""
+
+targets:
+  Probe:
+    type: application
+    platform: iOS
+    sources:
+      - path: Probe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.zacharyahmed.telemetryprobe
+        PRODUCT_NAME: Probe
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        CODE_SIGN_ENTITLEMENTS: Probe/Probe.entitlements
+    dependencies:
+      - sdk: HealthKit.framework
+      - sdk: CoreMotion.framework
+      - sdk: CoreLocation.framework
+      - sdk: EventKit.framework
+      - sdk: Contacts.framework
+      - sdk: Photos.framework
+      - sdk: MediaPlayer.framework
+      - sdk: CoreTelephony.framework
+      - sdk: NetworkExtension.framework
+      - sdk: CoreBluetooth.framework
+      - sdk: AVFoundation.framework
+      - sdk: SoundAnalysis.framework
+      - sdk: ARKit.framework
+      - sdk: Intents.framework
+      - sdk: AppIntents.framework
+      - sdk: Network.framework
+      - sdk: SensorKit.framework
+        weak: true
+      - sdk: DeviceActivity.framework
+        weak: true
+      - sdk: FamilyControls.framework
+        weak: true
+    info:
+      path: Probe/Info.plist
+      properties:
+        CFBundleDisplayName: Probe
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        ITSAppUsesNonExemptEncryption: false
+        # Makes probe-report.json pullable off the phone via Files.app
+        # (On My iPhone › Probe) with no cable and no Mac.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+
+        # ---- Background execution -------------------------------------
+        UIBackgroundModes:
+          - location
+          - fetch
+          - processing
+          - bluetooth-central
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.zacharyahmed.telemetryprobe.refresh
+          - com.zacharyahmed.telemetryprobe.process
+
+        # ---- Permission prompts (Info.plist usage strings) ------------
+        # Everything reachable WITHOUT a signed entitlement lives here.
+        NSHealthShareUsageDescription: >-
+          Probe reads your Health data to inventory exactly which health
+          metrics your devices actually record. Nothing leaves this phone.
+        NSHealthUpdateUsageDescription: >-
+          Probe requests write access only to test which Health categories
+          are grantable. It does not write any samples.
+        NSMotionUsageDescription: >-
+          Probe reads motion and fitness data to test step, floor, cadence
+          and activity-classification history available on this device.
+        NSLocationWhenInUseUsageDescription: >-
+          Probe takes a single location fix to confirm location accuracy
+          authorization.
+        NSLocationAlwaysAndWhenInUseUsageDescription: >-
+          Probe tests background location capability: visit detection,
+          significant-location-change, and region monitoring.
+        NSCalendarsFullAccessUsageDescription: >-
+          Probe counts calendars and recent events to confirm calendar
+          access. Event contents are never transmitted.
+        NSCalendarsUsageDescription: >-
+          Probe counts calendars and recent events to confirm calendar access.
+        NSRemindersFullAccessUsageDescription: >-
+          Probe counts reminder lists to confirm reminders access.
+        NSRemindersUsageDescription: >-
+          Probe counts reminder lists to confirm reminders access.
+        NSContactsUsageDescription: >-
+          Probe counts contacts to confirm contacts access. No contact
+          details are read or transmitted.
+        NSPhotoLibraryUsageDescription: >-
+          Probe reads photo metadata only (dates, counts, whether photos
+          carry location) to confirm photo-library access.
+        NSAppleMusicUsageDescription: >-
+          Probe reads your media library metadata such as play counts and
+          last-played dates to confirm media access.
+        NSMicrophoneUsageDescription: >-
+          Probe measures ambient sound level for two seconds to confirm
+          microphone metering. No audio is recorded or stored.
+        NSCameraUsageDescription: >-
+          Probe briefly uses the camera's light sensor to estimate ambient
+          brightness. No images are captured or stored.
+        NSBluetoothAlwaysUsageDescription: >-
+          Probe counts nearby Bluetooth devices as a proximity signal.
+          It does not connect to any device.
+        NSLocalNetworkUsageDescription: >-
+          Probe checks local-network reachability to confirm network
+          permission behaviour.
+        NSFocusStatusUsageDescription: >-
+          Probe reads whether a Focus mode is active to confirm Focus
+          status authorization.
+        NSSpeechRecognitionUsageDescription: >-
+          Probe checks speech-recognition availability. No speech is
+          captured.
+        NSUserTrackingUsageDescription: >-
+          Probe checks tracking-authorization status only. It performs no
+          tracking.
+        NSSiriUsageDescription: >-
+          Probe exposes App Intents so Shortcuts automations can log
+          events into it.
+
+        # ---- SensorKit (entitlement-gated; probed for status only) ----
+        NSSensorKitUsageDescription: >-
+          Probe checks whether research-grade sensor access has been
+          granted on this device.
+        NSSensorKitPrivacyPolicyURL: https://zacharyahmed.com/privacy
+        NSSensorKitUsageDetail:
+          SRSensorAmbientLightSensor: Ambient light level history.
+          SRSensorAccelerometer: Device accelerometer history.
+          SRSensorDeviceUsageReport: Device usage summary.
+          SRSensorKeyboardMetrics: Typing metrics summary.
+          SRSensorMessagesUsageReport: Messaging usage summary.
+          SRSensorPhoneUsageReport: Phone call usage summary.
+          SRSensorVisits: Visited-place history.
+          SRSensorPedometerData: Step history.
+          SRSensorOnWristState: Watch on-wrist state.

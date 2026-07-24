@@ -1,0 +1,133 @@
+name: Build Probe IPA
+
+# Builds the iOS capability probe on a GitHub-hosted macOS runner and emits
+# four .ipa artifacts from a SINGLE compile:
+#
+#   Probe-unsigned.ipa    no code signature at all
+#   Probe-tier0.ipa       ad-hoc signed, no provisioned capabilities
+#   Probe-tier1.ipa       ad-hoc signed, HealthKit + App Groups
+#   Probe-tier2.ipa       ad-hoc signed, + wifi-info, Family Controls, SensorKit
+#
+# Sideloadly on Windows re-signs whichever one you feed it with a real Apple ID.
+# The tier that fails to sign tells us exactly where the free-account ceiling is,
+# which is the whole point of the exercise.
+#
+# Cost note: macOS runners bill at a 10x multiplier on PRIVATE repos. On a
+# PUBLIC repo they are free and unmetered. This repo contains no personal data —
+# only code — so it is public deliberately.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # First run doubles as a probe of the CI environment itself: we do not
+      # know which Xcode / iOS SDK the runner image ships until we look.
+      - name: Runner environment
+        run: |
+          set -x
+          sw_vers
+          ls -1 /Applications | grep -i '^Xcode' || true
+          xcodebuild -version
+          xcodebuild -showsdks | sed -n '1,60p'
+          swift --version
+
+      - name: Install XcodeGen
+        run: |
+          set -euo pipefail
+          brew install xcodegen
+          xcodegen --version
+
+      - name: Generate Xcode project
+        working-directory: app
+        run: |
+          set -euo pipefail
+          xcodegen generate --spec project.yml
+          ls -la
+          xcodebuild -list -project Probe.xcodeproj
+
+      - name: Build (unsigned)
+        working-directory: app
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project Probe.xcodeproj \
+            -scheme Probe \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            ONLY_ACTIVE_ARCH=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            clean build 2>&1 | tee build.log
+
+      - name: Package IPAs
+        working-directory: app
+        run: |
+          set -euo pipefail
+          APP="build/Build/Products/Release-iphoneos/Probe.app"
+          test -d "$APP" || { echo "::error::Probe.app not produced"; exit 1; }
+          echo "Built product:"; du -sh "$APP"; ls -la "$APP"
+
+          mkdir -p ../out
+
+          package () {                       # $1 = variant, $2 = entitlements or ""
+            local variant="$1" ents="$2"
+            rm -rf Payload && mkdir Payload
+            cp -R "$APP" Payload/
+            if [ -n "$ents" ]; then
+              # Ad-hoc sign so the entitlements are embedded in the code
+              # signature. --generate-entitlement-der is required for iOS.
+              codesign --force --sign - \
+                       --entitlements "$ents" \
+                       --generate-entitlement-der \
+                       --timestamp=none \
+                       Payload/Probe.app
+              echo "--- entitlements embedded in $variant ---"
+              codesign -d --entitlements - Payload/Probe.app 2>&1 | sed -n '1,80p' || true
+            fi
+            ( cd . && zip -qry "../out/Probe-${variant}.ipa" Payload )
+            rm -rf Payload
+          }
+
+          package unsigned ""
+          package tier0 "Probe/Probe.entitlements"
+          package tier1 "Probe/Probe-tier1.entitlements"
+          package tier2 "Probe/Probe-tier2.entitlements"
+
+          ls -lh ../out
+
+      - name: Upload IPAs
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-ipas
+          path: out/*.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Upload build log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: app/build.log
+          retention-days: 7
+          if-no-files-found: ignore

@@ -1,0 +1,29 @@
+# Xcode / build
+app/Probe.xcodeproj/
+app/build/
+app/Payload/
+app/*.log
+out/
+DerivedData/
+*.ipa
+*.dSYM.zip
+*.xcuserstate
+xcuserdata/
+
+# Never commit collected telemetry or probe output
+*probe-report*.json
+*events.ndjson
+*launches.ndjson
+data/
+server/data/
+
+# Secrets
+.env
+*.mobileprovision
+*.p12
+*.cer
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini

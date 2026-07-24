@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  TIER 2 — approval-gated entitlements. These are expected to FAIL
+	  to provision. That failure is itself the result we want: it is
+	  cheaper to be told "no" by the signing toolchain in ten minutes
+	  than to design an architecture around a capability we cannot have.
+
+	  Family Controls  -> the only export channel for Screen Time data.
+	  wifi-info        -> current SSID/BSSID as a place fingerprint.
+	  SensorKit        -> Apple's research-grade sensor firehose.
+	-->
+	<key>get-task-allow</key>
+	<false/>
+	<key>com.apple.developer.healthkit</key>
+	<true/>
+	<key>com.apple.developer.healthkit.access</key>
+	<array/>
+	<key>com.apple.developer.healthkit.background-delivery</key>
+	<true/>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.com.zacharyahmed.telemetryprobe</string>
+	</array>
+	<key>com.apple.developer.networking.wifi-info</key>
+	<true/>
+	<key>com.apple.developer.family-controls</key>
+	<true/>
+	<key>com.apple.developer.sensorkit.reader.allow</key>
+	<array>
+		<string>ambient-light-sensor</string>
+		<string>accelerometer</string>
+		<string>device-usage</string>
+		<string>keyboard-metrics</string>
+		<string>messages-usage</string>
+		<string>phone-usage</string>
+		<string>visits</string>
+		<string>pedometer</string>
+		<string>on-wrist</string>
+	</array>
+</dict>
+</plist>
