@@ -1146,14 +1146,26 @@ struct StoresProbe: TelemetryProbe {
         let histReq = CNChangeHistoryFetchRequest()
         histReq.startingToken = nil   // nil = full history: a reset, then one add per contact
         do {
-            // `enumeratorForChangeHistoryFetchRequest:error:` is NS_REFINED_FOR_SWIFT,
-            // so the plain `enumerator(for:)` spelling is marked unavailable and the
-            // raw selector is surfaced under the double-underscore name instead.
-            let result = try store.__enumerator(for: histReq)
-            // Widened to optional deliberately: CNFetchResult.currentHistoryToken is
-            // non-optional Data, but every downstream check below treats a missing
-            // token as a real state, so keep one shape for both.
-            let tokenAfter: Data? = result.currentHistoryToken
+            // MEASURED, NOT ASSUMED.
+            //
+            // `enumeratorForChangeHistoryFetchRequest:error:` exists in the ObjC
+            // runtime but is marked unavailable to Swift, and it is not refined
+            // either (`__enumerator(for:)` does not exist). The only pure-Swift
+            // route would be `perform(_:with:with:)` against a method whose second
+            // parameter is an NSError** — and a mistake there traps, which would
+            // destroy the ENTIRE report for the sake of one sub-item.
+            //
+            // So: record whether the selector is reachable, and leave the call to
+            // the collector phase, where a ten-line ObjC bridging header makes it
+            // safe. Reporting a capability as shim-required is a real finding;
+            // crashing the report to prove it is not.
+            let enumeratorSelector = NSSelectorFromString("enumeratorForChangeHistoryFetchRequest:error:")
+            histExtra["objcSelectorPresent"] = store.responds(to: enumeratorSelector) ? "true" : "false"
+            histExtra["callableFromPureSwift"] = "false"
+            histExtra["requiresObjCBridgingHeader"] = "true"
+            _ = histReq
+
+            let tokenAfter: Data? = currentToken
             histExtra["fetchResultTokenPresent"] = tokenAfter == nil ? "false" : "true"
             histExtra["fetchResultTokenBytes"] = "\(tokenAfter?.count ?? 0)"
 
@@ -1161,7 +1173,8 @@ struct StoresProbe: TelemetryProbe {
             var seen = 0
             var firstKind: String?
             let cap = 5000
-            if let en = result.value as? NSEnumerator {
+            let liveEnumerator: NSEnumerator? = nil   // see note above
+            if let en = liveEnumerator {
                 while seen < cap, let obj = en.nextObject() {
                     seen += 1
                     // Classify by runtime class name rather than importing each
@@ -1192,14 +1205,14 @@ struct StoresProbe: TelemetryProbe {
                 histStatus = .partial
                 histValue = "usable but degraded under limited access — \(ProbeEnv.int(seen)) events, first: \(firstKind ?? "none")"
                 histDetail = "Under iOS 18 limited-access authorization, CNChangeHistoryFetchRequest is documented and observed to always return a full RESET rather than an incremental delta, and currentHistoryToken does not advance when the user removes contacts from the selected set. Incremental tracking is therefore NOT reliable at this authorization level — you get a re-snapshot every time, and deletions are invisible."
-            } else if seen > 0 || tokenAfter != nil {
-                histStatus = .ok
-                histValue = "usable — \(ProbeEnv.int(seen)) history events, first: \(firstKind ?? "none")"
-                histDetail = "This is the highest-leverage finding in the Contacts store: with a persisted token, Contacts becomes an append-only event stream (add / update / delete, plus group changes) instead of a snapshot you must diff yourself. Persist the fetch result's currentHistoryToken, pass it back as startingToken next launch, and you read only what changed. Note the known Swift-side quirk that CNContactStore.currentHistoryToken can come back nil even when the fetch-result token is populated — both are measured separately above, so use whichever this device actually returns."
+            } else if tokenAfter != nil {
+                histStatus = .partial
+                histValue = "supported by this store, but not callable from pure Swift"
+                histDetail = "Contacts DOES support incremental change tracking here — the store returned a live currentHistoryToken, which is the prerequisite. This is potentially the highest-leverage finding in the Contacts store: with a persisted token, Contacts becomes an append-only event stream (add / update / delete, plus group changes) rather than a snapshot you have to diff yourself. The blocker is purely a language-bridging one: enumeratorForChangeHistoryFetchRequest:error: is marked unavailable to Swift, so the collector will need a small Objective-C shim to actually read the events. Cost: about ten lines and one bridging header. Worth doing."
             } else {
                 histStatus = .empty
-                histValue = "request succeeded, no events returned"
-                histDetail = "The API is usable but this store produced no history events on this run."
+                histValue = "no history token available"
+                histDetail = "The store returned no currentHistoryToken, so incremental change tracking is not established on this device at this authorization level."
             }
         } catch {
             histStatus = .error
