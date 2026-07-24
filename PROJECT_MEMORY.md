@@ -126,6 +126,42 @@ Section 10 lists 15+ testable assertions for the device probe. Blocking tests #1
 background delivery signs / App Groups signs) are covered by the tier ladder plus EntitlementProbe's
 real App-Group write test and HealthProbe's background-delivery attempt.
 
+## Windows sideload stack — installed 2026-07-24
+
+| Component | Version | State |
+|---|---|---|
+| iTunes (web installer, apple.com) | 12.13.10.3 | installed |
+| Apple Mobile Device Support | 19.4.0.10 | **service Running** |
+| Apple USB driver `appleusb.inf` | — | registered as `oem199.inf` (came from the Store *Apple Devices* app) |
+| Sideloadly | v0.60 | `%LOCALAPPDATA%\Sideloadly\sideloadly.exe`, Start-menu entry |
+
+### Trap: the iTunes bundle silently skips Apple Mobile Device Support
+
+Running `iTunes64Setup.exe /passive /norestart` returned **exit code 0 in 34 seconds** and registered
+iTunes 12.13.10.3 — but installed **only `iTunes64.msi`**. No AMDS, no service, no
+`Common Files\Apple\Mobile Device Support`. `SetupAdmin.exe` appears to skip the device-support
+component when the Microsoft Store **Apple Devices** app is present.
+
+Sideloadly needs AMDS (the Windows usbmuxd equivalent). Without it the phone is invisible, and the
+usual advice — rip out the Store apps and reinstall — would have killed Zach's iCloud photo sync.
+
+**The non-destructive fix:**
+
+```powershell
+7z x iTunes64Setup.exe -o<dir>          # yields AppleMobileDeviceSupport64.msi (38 MB)
+msiexec /i AppleMobileDeviceSupport64.msi /qn /norestart
+```
+
+The bundle contains exactly three files: `iTunes64.msi`, `AppleMobileDeviceSupport64.msi`,
+`SetupAdmin.exe`. Installing the AMDS MSI directly closes the gap with zero collateral.
+
+Two smaller ones:
+- **Sideloadly is NSIS, not Inno Setup.** `/VERYSILENT` is ignored and the GUI sits there forever —
+  it hung 10 minutes before this was spotted. The correct switch is `/S`, and it needs **no
+  elevation** (installs per-user to `%LOCALAPPDATA%`).
+- **IExpress `/T:<dir> /C` extraction hangs without `/Q`.** 7-Zip handles the bundle directly and is
+  the better tool.
+
 ## Open
 
 - 11 probe files being written; 5 done.
