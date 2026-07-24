@@ -1732,13 +1732,21 @@ struct StoresProbe: TelemetryProbe {
         let once = Once()
         let detected: [String] = await withProbeTimeout(8, fallback: ["<timeout>"]) {
             await withCheckedContinuation { (c: CheckedContinuation<[String], Never>) in
-                UIPasteboard.general.detectPatterns(for: patterns) { result in
-                    guard once.claim() else { return }
-                    switch result {
-                    case .success(let set):
-                        c.resume(returning: set.map { $0.rawValue }.sorted())
-                    case .failure(let e):
-                        c.resume(returning: ["<error: \(e.localizedDescription)>"])
+                // UIPasteboard is main-actor isolated in the current UIKit
+                // overlay, and this continuation body is nonisolated (the
+                // withProbeTimeout work closure carries no isolation), so the
+                // call has to hop explicitly — exactly as the snapshot read
+                // above already does. Not hopping is a hard compile error, not
+                // a warning.
+                Task { @MainActor in
+                    UIPasteboard.general.detectPatterns(for: patterns) { result in
+                        guard once.claim() else { return }
+                        switch result {
+                        case .success(let set):
+                            c.resume(returning: set.map { $0.rawValue }.sorted())
+                        case .failure(let e):
+                            c.resume(returning: ["<error: \(e.localizedDescription)>"])
+                        }
                     }
                 }
             }

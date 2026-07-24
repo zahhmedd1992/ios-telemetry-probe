@@ -702,6 +702,15 @@ enum BackgroundProbeLedger {
 
     static let fileName = "launches.ndjson"
 
+    /// Serialises appends. Today `run()` and a BGTask launch handler cannot
+    /// actually collide, because the launch handler only exists once
+    /// installAtLaunch() is wired into ProbeApp.init() — but the whole point of
+    /// this file is that someone WILL wire it in, and at that moment two
+    /// seekToEnd+write sequences on different queues can interleave and tear a
+    /// line. stats() already tolerates a torn line by counting it as malformed;
+    /// this makes it not happen in the first place, for the cost of one lock.
+    private static let writeLock = NSLock()
+
     static var url: URL? {
         FileManager.default
             .urls(for: .documentDirectory, in: .userDomainMask)
@@ -740,6 +749,9 @@ enum BackgroundProbeLedger {
         }
         line += "\n"
         guard let bytes = line.data(using: .utf8) else { return "Failed to encode ledger line." }
+
+        writeLock.lock()
+        defer { writeLock.unlock() }
 
         let fm = FileManager.default
         if !fm.fileExists(atPath: url.path) {
@@ -1165,9 +1177,9 @@ struct BackgroundProbe: TelemetryProbe {
             "Why this probe does not call register()",
             .partial,
             value: "registration is launch-time-only, by API contract",
-            detail: "This is the single most important operational constraint in the BackgroundTasks framework and it is worth stating precisely, because getting it wrong does not produce an error — it produces a crash.\n\nApple's BGTaskScheduler.h: \"You must register launch handlers before your application finishes launching. Attempting to register a handler after launch or multiple handlers for the same identifier is an error.\" And: \"Register each task identifier only once. The system kills the app on the second registration of the same task identifier.\"\n\nBoth failures raise NSInternalInconsistencyException from BGTaskScheduler.m:185 — \"All launch handlers must be registered before application finishes launching\". That is an Objective-C exception. Swift cannot catch it. There is no do/try/catch, no guard, and no defensive check that makes it survivable, so a probe that called register() from a button tap would take all eleven sections of this report down with it every single run. It is therefore deliberately not called here.\n\nTHREE CONSEQUENCES FOR THE COLLECTOR:\n1. Registration belongs in ProbeApp.init() or application(_:didFinishLaunchingWithOptions:), never in onAppear, never in a view model, never lazily on first use, and never from a third-party SDK's delayed initialiser — that last one is the single most common cause of this crash in the wild.\n2. Registration must happen on EVERY launch, including the background launches. The registry does not persist across process death; an app that registers only when the user opens it will be woken and will have no handler to run.\n3. Every identifier listed in BGTaskSchedulerPermittedIdentifiers needs a handler. An identifier with no handler is a wake the system may grant and the app cannot use.\n\nThe full, idempotent, lock-guarded implementation is present in this file as BackgroundProbeScheduler.installAtLaunch(launchOptions:) — including handlers that append to the launch ledger and immediately resubmit, so the ledger becomes a self-sustaining record of real wakeups. It needs one line in ProbeApp.swift to become live.",
+            detail: "This is the single most important operational constraint in the BackgroundTasks framework and it is worth stating precisely, because getting it wrong does not produce an error — it produces a crash.\n\nApple's BGTaskScheduler.h: \"You must register launch handlers before your application finishes launching. Attempting to register a handler after launch or multiple handlers for the same identifier is an error.\" And: \"Register each task identifier only once. The system kills the app on the second registration of the same task identifier.\"\n\nBoth failures trip an assertion inside the BackgroundTasks framework and raise NSInternalInconsistencyException — \"All launch handlers must be registered before application finishes launching\". That is an Objective-C exception. Swift cannot catch it. There is no do/try/catch, no guard, and no defensive check that makes it survivable, so a probe that called register() from a button tap would take all eleven sections of this report down with it every single run. It is therefore deliberately not called here.\n\nTHREE CONSEQUENCES FOR THE COLLECTOR:\n1. Registration belongs in ProbeApp.init() or application(_:didFinishLaunchingWithOptions:), never in onAppear, never in a view model, never lazily on first use, and never from a third-party SDK's delayed initialiser — that last one is the single most common cause of this crash in the wild.\n2. Registration must happen on EVERY launch, including the background launches. The registry does not persist across process death; an app that registers only when the user opens it will be woken and will have no handler to run.\n3. Every identifier listed in BGTaskSchedulerPermittedIdentifiers needs a handler. An identifier with no handler is a wake the system may grant and the app cannot use.\n\nThe full, idempotent, lock-guarded implementation is present in this file as BackgroundProbeScheduler.installAtLaunch(launchOptions:) — including handlers that append to the launch ledger and immediately resubmit, so the ledger becomes a self-sustaining record of real wakeups. It needs one line in ProbeApp.swift to become live.",
             extra: [
-                "exceptionSite": "BGTaskScheduler.m:185",
+                "exceptionSource": "BackgroundTasks framework assertion",
                 "exceptionName": "NSInternalInconsistencyException",
                 "catchableFromSwift": "false",
                 "safeCallSite": "ProbeApp.init() / application(_:didFinishLaunchingWithOptions:)",
@@ -1402,7 +1414,7 @@ struct BackgroundProbe: TelemetryProbe {
             extra: [
                 "path": ledgerPath,
                 "format": "NDJSON, one JSON object per line",
-                "fields": "ts, reason, bootKey, procStart, uptimeSec, sysVersion, build, lowPower, thermal, state, bgRefresh, battery, batteryState, protectedData"
+                "fields": "ts, reason, bootKey, procStart, uptimeSec, sysVersion, build, lowPower, thermal, launchState, bgRefresh, battery, batteryState, protectedData, installHookRan"
             ]
         ))
 
@@ -1679,11 +1691,17 @@ enum BackgroundProbeSummary {
         // --- What this section deliberately did not do -------------------
         s += "DELIBERATE OMISSIONS, so the gaps are auditable rather than invisible:\n"
         s += "• register() is never called from run(). Late or duplicate registration raises "
-        s += "NSInternalInconsistencyException (BGTaskScheduler.m:185), an Objective-C exception Swift "
+        s += "NSInternalInconsistencyException from a BackgroundTasks framework assertion — an "
+        s += "Objective-C exception Swift "
         s += "cannot catch, which would destroy all eleven sections on every run. The full "
         s += "implementation ships in this file as BackgroundProbeScheduler.installAtLaunch() and needs "
         s += "one line in ProbeApp.init() to go live. The constraint is not a probe limitation — it IS "
         s += "the finding, and it is the rule the collector has to be built around.\n"
+        s += "• Process start time is read positionally from the sysctl KERN_PROC blob rather than via "
+        s += "kp_proc.p_starttime, because that name is a C preprocessor macro onto a union member and "
+        s += "Swift's importer drops it — the obvious spelling does not compile. The positional read is "
+        s += "validated against boot time and the current time and discarded if implausible, so this "
+        s += "column reads \"unknown\" rather than guessing.\n"
         s += "• BGContinuedProcessingTask (iOS 26) is detected by NSClassFromString rather than "
         s += "referenced as a symbol, so the build cannot break on an SDK whose exact spelling could "
         s += "not be verified from the build machine. It is user-initiated and shows system progress "

@@ -87,6 +87,11 @@ struct ProbeReport: Codable {
     let device: [String: String]
     var sections: [ProbeSection]
 
+    /// `@MainActor` because `UIDevice` is main-actor isolated in the current
+    /// UIKit overlay; reading `UIDevice.current` from a nonisolated synchronous
+    /// context does not compile. The only caller (`ProbeRunner.report`) is
+    /// already main-actor isolated, so this costs nothing.
+    @MainActor
     static func envelope(sections: [ProbeSection]) -> ProbeReport {
         let b = Bundle.main
         let dev = UIDevice.current
@@ -182,20 +187,60 @@ enum ProbeEnv {
     }
 }
 
+/// One-shot claim ticket so the worker arm and the deadline arm of
+/// `withProbeTimeout` cannot both resume the same continuation.
+private final class ProbeTimeoutGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var claimed = false
+    /// Returns true exactly once, for the first caller.
+    func claim() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        if claimed { return false }
+        claimed = true
+        return true
+    }
+}
+
 /// Runs an async operation with a hard deadline so one wedged framework call
 /// cannot stall the whole report. Returns `fallback` on timeout.
+///
+/// DELIBERATELY NOT a `withTaskGroup`. Two reasons, both load-bearing:
+///
+///  1. `TaskGroup` is declared `where ChildTaskResult: Sendable`, so a group
+///     parameterised on an unconstrained `T` does not compile. Adding
+///     `T: Sendable` would then push the constraint out to all 25 call sites.
+///  2. More importantly, a task group implicitly AWAITS its remaining children
+///     when the body returns. `cancelAll()` does not help, because
+///     `withCheckedContinuation` is not cancellation-aware — so a probe parked
+///     on a callback that never fires would hang here forever rather than time
+///     out. Since ProbeRunner's own 180 s per-section cap also routes through
+///     this function, that single hang would take the entire report with it.
+///
+/// This variant races two independent tasks against one continuation and
+/// resumes on whichever arm wins, so it always returns on the deadline.
+/// TRADE-OFF, stated plainly: the losing worker is ABANDONED, not awaited. On a
+/// timeout the probe body keeps running detached (it may still hold the audio
+/// session, a location manager, or a photo enumeration) while the runner starts
+/// the next section. That is the correct trade — a contaminated tail after a
+/// timeout that should never fire beats a permanent hang with no report at all.
 func withProbeTimeout<T>(_ seconds: Double,
                          fallback: T,
                          _ work: @escaping () async -> T) async -> T {
-    await withTaskGroup(of: T.self) { group -> T in
-        group.addTask { await work() }
-        group.addTask {
-            try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000))
-            return fallback
+    let gate = ProbeTimeoutGate()
+    return await withCheckedContinuation { (cont: CheckedContinuation<T, Never>) in
+        let worker = Task {
+            let value = await work()
+            if gate.claim() { cont.resume(returning: value) }
         }
-        let first = await group.next() ?? fallback
-        group.cancelAll()
-        return first
+        Task {
+            let ns = UInt64(max(0, seconds) * 1_000_000_000)
+            try? await Task.sleep(nanoseconds: ns)
+            if gate.claim() {
+                worker.cancel()
+                cont.resume(returning: fallback)
+            }
+        }
     }
 }
 
