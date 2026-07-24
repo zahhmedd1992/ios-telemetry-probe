@@ -49,6 +49,50 @@ Phase 0 (capability probe) in flight. Nothing shipped to the phone yet.
 - **Sync is phone-initiated, piggybacked on OS wakeups, never a timer.** The VM cannot reach an
   idle iPhone (see `reference_ios_wireguard_inbound_limit.md`).
 
+## Phase 0 shipped — 2026-07-24
+
+Build is **green**. 16,756 lines of Swift across 14 files, ~400 capabilities probed, four IPAs in
+`ipa/`. Waiting on Zach to sideload.
+
+### Compile errors that cost a CI round-trip (all now fixed)
+
+1. **`NWPath` is ambiguous** when both `Network` and `NetworkExtension` are imported —
+   NetworkExtension exports a deprecated `NWPath` class of its own. Qualify as `Network.NWPath`,
+   or every `.wifi` / `.cellular` member lookup fails to infer its base as a knock-on.
+2. **`NSFastEnumerationIterator.next()` is mutating** — bind with `var`, not `let`.
+3. **Type-checker timeout** on a four-stage `.map{}.sorted{}.map{}.joined()` chain over a
+   `(String, Int)` tuple. Write it longhand; the fluent version does not compile.
+4. **`CNContactStore.enumerator(for:)` is unavailable in Swift** and is NOT refined either —
+   `__enumerator(for:)` does not exist. Reading Contacts change history requires an ObjC
+   bridging header. Probe now reports reachability rather than risking `perform` against an
+   `NSError**`, which would trap and destroy the whole report.
+5. **`notify_register_check` / `notify_get_state` / `notify_cancel` are invisible to Swift** —
+   public libSystem C API, but `notify.h` is in no module map iOS Swift can see. Resolved via
+   `dlsym` against `RTLD_DEFAULT` (`UnsafeMutableRawPointer(bitPattern: -2)`) with
+   `@convention(c)` typealiases. Optional throughout, so a vanished symbol degrades instead of
+   failing the build.
+
+Plus two the crosscheck pass caught before CI: `withTaskGroup` cannot be parameterised on an
+unconstrained `T` (`ChildTaskResult: Sendable`), and `UIDevice.current` is main-actor isolated so
+it cannot be read from a nonisolated synchronous context.
+
+### The trap that would have cost an install cycle
+
+A missing **or empty** `NS*UsageDescription` does not throw — **iOS terminates the process**. The
+app just closes: no report, no error, no clue. Every "never traps" guarantee in the probe files is
+void without the plist key. And discovering it costs one of only 10 App IDs per 7 days.
+
+Now guarded permanently in CI: a step parses the **built** `Info.plist` (not `project.yml`, which
+is one indirection away from what ships) and fails the build on any missing or blank key.
+Currently 20/20.
+
+### Also caught
+
+- An agent cloned a prior-art repo (Overland) **into the Swift sources directory**. `.gitignore`
+  now excludes `app/Probe/Probes/*/`.
+- `git push` plus a manual `gh workflow run` cancel each other via the concurrency group. Push
+  alone is enough.
+
 ## Open
 
 - 11 probe files being written; 5 done.
