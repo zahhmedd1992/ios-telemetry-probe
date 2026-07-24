@@ -1,0 +1,7 @@
+# Everything checked out on the macOS runner must be LF. A CRLF line ending
+# inside a workflow `run:` block becomes a literal \r in bash and produces
+# "command not found" errors that look nothing like their cause.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ipa binary
