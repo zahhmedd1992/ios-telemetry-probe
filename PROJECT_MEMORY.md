@@ -93,6 +93,39 @@ Currently 20/20.
 - `git push` plus a manual `gh workflow run` cancel each other via the concurrency group. Push
   alone is enough.
 
+## Track A complete — `docs/CAPABILITY-MATRIX.md` (1,063 lines, 434 capabilities, 11 domains)
+
+**Correction to the earlier read on HealthKit.** Apple's own
+[supported-capabilities-ios](https://developer.apple.com/help/account/reference/supported-capabilities-ios/)
+table has a third column for the free Personal Team, and three researchers independently parsed the
+**raw HTML** (the checkmarks render as `<figure class="icon icon-checksolid">` with no text, so
+page-summarizers hallucinate them). The free column has exactly nine entries:
+
+> App groups · Background modes · Data protection · **HealthKit** · HomeKit · Inter-App Audio ·
+> Keychain sharing · Maps · Wireless Accessory Configuration
+
+So HealthKit and App Groups are both listed as free. AltSign's six-entitlement allowlist — the
+evidence that pointed the other way — is a property of **AltStore's implementation**, not of Apple's
+membership tier. Sideloadly uses a different (zsign-lineage) signer, and our pipeline is different
+again: hand-authored entitlements, unsigned CI build, re-signed on Windows, never touching Xcode's
+Signing & Capabilities UI, which is where most reported behaviour comes from.
+
+Net: HealthKit-on-free went from "probably needs $99" to "Apple says yes, verify it." The tier
+ladder settles it either way.
+
+**`healthkit.background-delivery` is a separate, second test.** It is not a row in Apple's table and
+not configurable in the App ID portal UI — Xcode writes it silently when you tick HealthKit, and our
+pipeline never runs Xcode. It fails at **runtime**, not build time, with
+`HKError.errorAuthorizationDenied`. HealthProbe tests exactly this.
+
+**The verdict:** build Tier 0 free; pay the $99 for the **1-year provisioning profile**, not for any
+entitlement — because the 7-day expiry fails silently and silence is indistinguishable from "nothing
+happened."
+
+Section 10 lists 15+ testable assertions for the device probe. Blocking tests #1–3 (HealthKit signs /
+background delivery signs / App Groups signs) are covered by the tier ladder plus EntitlementProbe's
+real App-Group write test and HealthProbe's background-delivery attempt.
+
 ## Open
 
 - 11 probe files being written; 5 done.
