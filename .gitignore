@@ -27,3 +27,7 @@ server/data/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Prior-art clones live in research/, never in the Swift sources dir
+research/prior-art/
+app/Probe/Probes/*/

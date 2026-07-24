@@ -46,12 +46,12 @@ import Darwin
 // explicit: "You must register launch handlers before your application finishes
 // launching. Attempting to register a handler after launch or multiple handlers
 // for the same identifier is an error", and "The system kills the app on the
-// second registration of the same task identifier." Late registration raises
-// NSInternalInconsistencyException from BGTaskScheduler.m:185 ("All launch
-// handlers must be registered before application finishes launching"), which is
-// an Objective-C exception — uncatchable from Swift, and fatal to all eleven
-// sections of this report. This probe runs from a button tap, which is by
-// definition after launch.
+// second registration of the same task identifier." Late registration trips a
+// BackgroundTasks framework assertion and raises NSInternalInconsistencyException
+// ("All launch handlers must be registered before application finishes
+// launching"), which is an Objective-C exception — uncatchable from Swift, and
+// fatal to all eleven sections of this report. This probe runs from a button
+// tap, which is by definition after launch.
 //
 // Instead the registration is implemented in full, once, in
 // `BackgroundProbeScheduler.installAtLaunch(launchOptions:)`, and the probe
@@ -376,15 +376,58 @@ enum BackgroundProbeSys {
     /// This process's start time — i.e. when THIS launch of the app happened.
     /// Combined with the ledger it separates "the app was already running" from
     /// "iOS started a fresh process for this event".
+    ///
+    /// IMPLEMENTATION NOTE, and it is not a stylistic one. The obvious spelling
+    /// `info.kp_proc.p_starttime` DOES NOT COMPILE in Swift. In <sys/proc.h>
+    /// `p_starttime` is not a struct field at all — it is a preprocessor macro:
+    ///
+    ///     union {
+    ///         struct { struct proc *__p_forw; struct proc *__p_back; } p_st1;
+    ///         struct timeval __p_starttime;
+    ///     } p_un;
+    ///     #define p_starttime p_un.__p_starttime
+    ///
+    /// Swift's ClangImporter imports object-like macros only when they expand to
+    /// a literal constant. A macro expanding to a member-access chain is dropped
+    /// entirely, so the member does not exist from Swift and the reference is a
+    /// hard build error — which, in this project, would take all eleven probe
+    /// files down with it.
+    ///
+    /// So the timeval is read positionally instead. That is safe here for a
+    /// reason that is checked, not assumed: `p_un` is the FIRST member of
+    /// `struct extern_proc`, and `kp_proc` is the FIRST member of
+    /// `struct kinfo_proc`, so the timeval begins at byte offset 0 of the blob
+    /// sysctl fills in. Because that is a layout assumption rather than a
+    /// compiler-checked one, the result is then validated on both ends below and
+    /// discarded if implausible — a fabricated timestamp would be written into an
+    /// append-only ledger and could never be retracted, so "unknown" is strictly
+    /// better than "probably right".
     static func processStartTime() -> Date? {
         var info = kinfo_proc()
         var size = MemoryLayout<kinfo_proc>.stride
         var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, getpid()]
         let r = sysctl(&mib, 4, &info, &size, nil, 0)
-        guard r == 0 else { return nil }
-        let tv = info.kp_proc.p_starttime
-        guard tv.tv_sec > 0 else { return nil }
-        return Date(timeIntervalSince1970: Double(tv.tv_sec) + Double(tv.tv_usec) / 1_000_000)
+        guard r == 0, size >= MemoryLayout<timeval>.size else { return nil }
+
+        let tv: timeval? = withUnsafeBytes(of: info) { buf -> timeval? in
+            guard buf.count >= MemoryLayout<timeval>.size else { return nil }
+            return buf.loadUnaligned(as: timeval.self)
+        }
+        guard let tv, tv.tv_sec > 0 else { return nil }
+
+        let candidate = Date(timeIntervalSince1970: Double(tv.tv_sec)
+                             + Double(tv.tv_usec) / 1_000_000)
+
+        // Two-sided plausibility gate. A process cannot have started before the
+        // device booted, and cannot have started in the future. If the layout
+        // assumption above ever stops holding, the value lands wildly outside
+        // this window and is dropped rather than recorded.
+        let now = Date()
+        let boot = bootTime() ?? now.addingTimeInterval(-ProcessInfo.processInfo.systemUptime)
+        let slack: TimeInterval = 5
+        guard candidate >= boot.addingTimeInterval(-slack),
+              candidate <= now.addingTimeInterval(slack) else { return nil }
+        return candidate
     }
 
     /// Reboot identity, rounded to the minute so clock jitter cannot fabricate
