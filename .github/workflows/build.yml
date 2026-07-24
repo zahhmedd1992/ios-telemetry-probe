@@ -30,7 +30,12 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-latest
+    # Pinned, not `macos-latest`. macos-15's DEFAULT Xcode is still 16.4
+    # (iOS 18.5 SDK) even though Xcode 26 is installed on that image — pinning
+    # the wrong label silently builds against the iOS 18 SDK and loses every
+    # iOS 26 API with no error. macos-26 defaults to Xcode 26.5 / iphoneos26.5.
+    # Standard labels only: larger runners are billed even on public repos.
+    runs-on: macos-26
     timeout-minutes: 45
 
     steps:
