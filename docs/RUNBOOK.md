@@ -46,15 +46,20 @@ Four files, same app, escalating entitlements:
 
 | File | Entitlements | What it tests |
 |---|---|---|
-| `Probe-tier0.ipa` | none provisioned | should always install — proves the toolchain works |
-| `Probe-tier1.ipa` | HealthKit + App Groups | **the $99 question** |
+| **`Probe-tier1.ipa`** | HealthKit + App Groups | **start here — this is the $99 question** |
+| `Probe-tier0.ipa` | none provisioned | fallback if tier1 refuses to install |
 | `Probe-tier2.ipa` | + Wi-Fi info, Family Controls, SensorKit | expected to fail; the error is the finding |
-| `Probe-unsigned.ipa` | none at all | control, only if the others misbehave |
+| `Probe-unsigned.ipa` | none at all | last resort, only if Sideloadly rejects both of the above |
 
-### 5. Sideload **tier0** first
+**Start with tier1, not tier0.** All four share one bundle ID, so each install replaces the last and
+you'd have to sit through the whole probe again. If tier1 installs, HealthKit works and tier0 is
+redundant — one probe run instead of three. If tier1 is refused, that failure takes seconds and you
+drop to tier0 having lost nothing.
+
+### 5. Sideload **tier1** first
 
 1. Plug the iPhone in with a cable. Unlock it. Tap **Trust This Computer** if asked.
-2. Open Sideloadly. Drag `Probe-tier0.ipa` onto the window.
+2. Open Sideloadly. Drag `Probe-tier1.ipa` onto the window.
 3. Enter your **Apple ID**. Use the real password plus 2FA — app-specific passwords only work on
    *paid* developer accounts, so a free account must use the real one. Sideloadly sends credentials
    to Apple only.
@@ -68,26 +73,39 @@ You're trusting the certificate, not the app, so weekly refreshes won't re-promp
 
 ### 7. Run it and save the report
 
-Open **Probe**, tap **Run full probe**, and **grant every permission prompt** — there will be many.
-A denial is recorded as a denial, which is a different (and less useful) result than a missing
-capability.
+> **Budget 6–10 minutes and stay in the app.** It queries roughly 400 capabilities across eleven
+> frameworks, including a HealthKit sweep over ~215 data types and several deliberate multi-day
+> history walks. It is not hung. Don't switch away — several probes stop collecting the moment the
+> app is backgrounded.
 
-When it finishes, tap **Share** and AirDrop/email the JSON to yourself. **Do this before installing
-the next tier** — all four IPAs share one bundle ID, so each install replaces the last.
+Open **Probe**, tap **Run full probe**, and **grant every permission prompt** — there will be a lot
+of them, one at a time. A denial gets recorded as a denial, which is a real but much less useful
+result than a missing capability.
 
-### 8. Repeat for tier1, then tier2
+**Watch for the Health sheet specifically.** This is the decisive observation, and it's easy to
+miss: the app can install *with HealthKit silently stripped*, in which case everything looks fine
+until the data is empty. iOS gives no public way to read what the binary actually carries, so the
+proof is behavioural — the Health permission sheet appearing, and samples coming back.
 
-Same steps. What happens is the finding:
+When it finishes, tap **Share** and AirDrop or email the JSON to yourself. **Do this before
+installing anything else** — the tiers share one bundle ID, so each install replaces the last.
+
+### 8. Then tier2 (optional, ~1 minute)
+
+Only if you want the Screen Time / SensorKit answer nailed down. Install it, and read the error —
+you don't need to run the full probe again.
+
+What you see is the finding, in every case:
 
 | What you see | What it means |
 |---|---|
-| Installs and HealthKit prompts appear | HealthKit works on a free Apple ID — you don't need the $99 |
-| **`0xe8008016`** / "Entitlements are not valid" | The signer kept an entitlement your free profile refuses. That capability needs the paid account. |
-| Installs fine, but the API fails at first use | The signer silently *stripped* the entitlement to match the profile. Same conclusion, quieter failure. |
-| Sideloadly errors before install | Read the message — it usually names the offending capability |
+| Installs, **and the Health sheet appears**, and Health items report data | HealthKit works on a free Apple ID. You don't need the $99 for it. |
+| Installs, but no Health sheet / Health section is all empty | The signer silently **stripped** the entitlement to match your profile. HealthKit needs the paid account. |
+| **`0xe8008016`** / "Entitlements are not valid" | The signer **kept** an entitlement your free profile refuses. Same conclusion, louder failure. |
+| Sideloadly errors before install | Read the message — it usually names the offending capability outright |
 
-Tier2 is *expected* to fail. That failure is worth ten minutes because it's cheaper to be told "no"
-by the signing toolchain than to design an architecture around a capability we can't have.
+Tier2 is *expected* to fail. That failure is worth the minute: it's far cheaper to be told "no" by
+the signing toolchain now than to design an architecture around a capability we can't have.
 
 ---
 
