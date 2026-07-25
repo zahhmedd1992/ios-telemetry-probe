@@ -171,13 +171,30 @@ targets:
           Probe checks whether research-grade sensor access has been
           granted on this device.
         NSSensorKitPrivacyPolicyURL: https://zacharyahmed.com/privacy
+        # Correct shape: keys are SRSensorUsage<Name> and each VALUE is a dictionary
+        # with a Description string — NOT a plain string, which is what this used to
+        # be. A wrong shape or a sensor missing from this dictionary makes
+        # SRSensorReader.requestAuthorization terminate the process outright.
+        # The probe no longer makes that call, but the keys are corrected so the
+        # plist is not quietly wrong if it is ever re-enabled.
         NSSensorKitUsageDetail:
-          SRSensorAmbientLightSensor: Ambient light level history.
-          SRSensorAccelerometer: Device accelerometer history.
-          SRSensorDeviceUsageReport: Device usage summary.
-          SRSensorKeyboardMetrics: Typing metrics summary.
-          SRSensorMessagesUsageReport: Messaging usage summary.
-          SRSensorPhoneUsageReport: Phone call usage summary.
-          SRSensorVisits: Visited-place history.
-          SRSensorPedometerData: Step history.
-          SRSensorOnWristState: Watch on-wrist state.
+          SRSensorUsageAmbientLightSensor:
+            Description: Ambient light level history.
+          SRSensorUsageMotion:
+            Description: Device motion and accelerometer history.
+          SRSensorUsageDeviceUsage:
+            Description: Device usage summary.
+          SRSensorUsageKeyboardMetrics:
+            Description: Typing metrics summary.
+          SRSensorUsageMessagesUsage:
+            Description: Messaging usage summary.
+          SRSensorUsagePhoneUsage:
+            Description: Phone call usage summary.
+          SRSensorUsageVisits:
+            Description: Visited-place history.
+          SRSensorUsagePedometer:
+            Description: Step history.
+          SRSensorUsageOnWrist:
+            Description: Watch on-wrist state.
+          SRSensorUsageElevation:
+            Description: Elevation and ambient pressure history.

@@ -1131,21 +1131,25 @@ extension AmbientProbe {
             extra: authExtra
         ))
 
-        // --- Actually ask. The exact rejection is the ground truth we came for.
-        let sensorSet: Set<SRSensor> = Set(keySensors.map { $0.1 })
-        let requestOutcome: String = await AmbientProbeAwait.once(
-            timeout: 10,
-            timeoutValue: "TIMEOUT: requestAuthorization did not call back within 10s"
-        ) { done in
-            SRSensorReader.requestAuthorization(sensors: sensorSet) { error in
-                if let error {
-                    let ns = error as NSError
-                    done("domain=\(ns.domain) code=\(ns.code) — \(ns.localizedDescription)")
-                } else {
-                    done("nil error — authorization sheet path succeeded")
-                }
-            }
-        }
+        // --- DELIBERATELY NOT ASKING ---
+        //
+        // `SRSensorReader.requestAuthorization` TERMINATES the process unless
+        // `NSSensorKitUsageDetail` carries a correctly-shaped entry for EVERY sensor
+        // in the request: keyed `SRSensorUsage<Name>`, valued as a DICTIONARY with a
+        // `Description` string. A plain-string value, a mistyped key, or one missing
+        // sensor is fatal. And it is a TCC kill, not an Objective-C exception — so
+        // neither do/catch nor ProbeCatchNSException can intercept it.
+        //
+        // The information this call would buy is already in hand: `authorizationStatus`
+        // above reads WITHOUT asking, and the entitlement is granted per approved
+        // research study through an institutional account, so the answer is "denied"
+        // with or without the request. Trading a likely process kill for an answer we
+        // already have is a bad trade when the report IS the product.
+        //
+        // Revisit only if `com.apple.developer.sensorkit.reader.allow` is ever actually
+        // provisioned — at which point the plist entries would have to be built and
+        // verified sensor-by-sensor first.
+        let requestOutcome = "not requested (deliberate) — denied by entitlement policy; asking without a complete NSSensorKitUsageDetail terminates the process"
 
         let denied = requestOutcome.lowercased().contains("entitle")
             || requestOutcome.contains("code=8")
