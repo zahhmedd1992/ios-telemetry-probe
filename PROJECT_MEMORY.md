@@ -227,6 +227,61 @@ caught within 90 seconds, removed via `--amend` + `--force-with-lease`. `.gitign
   the app was crash-guaranteed, because the missing key wasn't on my list. **A guard that validates
   your own assumptions cannot catch the assumption being wrong.**
 
+## VERDICT — measured on device 2026-07-25 02:08Z. **$99 is required.**
+
+Report: `research/probe-report.json` (3 sections, 289 items). Free Apple ID + Sideloadly, iPhone13,4
+on iOS 26.5.2, bundle `com.zacharyahmed.telemetryprobe.8CA73CL7P6`.
+
+### The provisioning profile, read from the installed binary
+
+| Entitlement | Result |
+|---|---|
+| `com.apple.developer.healthkit` | **absent** |
+| `…healthkit.background-delivery` | **absent** |
+| `…healthkit.access` | **absent** |
+| `com.apple.security.application-groups` | **absent** — container URL returned nil on a live write test |
+| `aps-environment` | absent |
+| `…networking.wifi-info` | absent |
+| `…family-controls` | absent |
+| `…sensorkit.reader.allow` | absent |
+| `keychain-access-groups` | **granted** — `[8CA73CL7P6.*]`, verified by a real add/read/delete round-trip |
+| Profile validity | **exactly 7.00 days** (expires 2026-08-01) |
+
+### This REVERSES the documentation
+
+Apple's own supported-capabilities table lists HealthKit **and** App Groups in the free "Apple
+Developer" column. Through this pipeline they are stripped. Two independent confirmations:
+the entitlement is missing from `embedded.mobileprovision`, and `requestAuthorization` **failed** —
+**0 of 189 resolved HealthKit types returned a single sample.** The App Group container was nil
+under a real filesystem write test, not merely reported absent.
+
+**The measurement beats the table.** This is the entire justification for building the probe before
+the collector: the documented answer and the actual answer disagree, and only one of them ships.
+
+Nuance worth keeping: this says the *AltSign/Sideloadly free-provisioning path* cannot request these
+capabilities. It does not prove Xcode's own free personal team cannot. Irrelevant here — there is no
+Mac — but do not over-generalise the claim.
+
+### Tier 0 is real and it is large
+
+Everything gated only by an Info.plist string worked, with zero entitlements:
+
+- `CMPedometer` — 6 of 6 capability flags available
+- `CMMotionActivityManager` — available
+- `CMAltimeter` — relative **and** absolute altitude
+- Accelerometer / gyroscope / magnetometer / fused device motion — all streaming at ~50 Hz
+- All four attitude reference frames
+- `HKObserverQuery` handler still fired in 0.25 s even with HealthKit unprovisioned
+
+### Consequences for the collector
+
+1. **Pay the $99.** Not for Family Controls, Wi-Fi info or WeatherKit — for HealthKit and for the
+   1-year profile. Without it there is no health data at all, and the 7-day expiry fails silently.
+2. **No app extensions on the free tier.** App Groups is the only channel an extension has to reach
+   the host app, and it is absent. Keychain sharing is granted but does not substitute for a shared
+   container.
+3. **Motion, location, device and stores collection can start today**, unblocked.
+
 ## Open
 
 - 11 probe files being written; 5 done.
