@@ -382,7 +382,11 @@ struct MotionProbe: TelemetryProbe {
         ))
 
         if motionUsageOK && activityAvailable {
-            let from30 = now.addingTimeInterval(-30 * 86_400)
+            // 10 days, not 30. CMMotionActivity segments arrive as one unbounded
+            // array and the documented retention is ~7 days, so days 11-30 return
+            // nothing while tripling peak memory. 10 still overshoots the documented
+            // window enough to MEASURE the real one, which is the point of the query.
+            let from30 = now.addingTimeInterval(-10 * 86_400)
             let act = await queryActivity(activityManager, from: from30, to: now, timeout: 25)
             items.append(contentsOf: activityItems(act,
                                                    requestedFrom: from30,

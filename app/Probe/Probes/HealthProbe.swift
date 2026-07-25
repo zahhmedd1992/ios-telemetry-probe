@@ -1193,14 +1193,21 @@ struct HealthProbe: TelemetryProbe {
             work.append(HealthProbeWork(key: "health.c.\(id)",
                                         label: HealthProbeCatalog.label(id), type: t, unit: nil))
         }
-        for (id, t) in seriesTypes {
-            work.append(HealthProbeWork(key: "health.series.\(id)",
-                                        label: HealthProbeCatalog.label(id), type: t, unit: nil))
-        }
-        for (id, t) in documentTypes {
-            work.append(HealthProbeWork(key: "health.doc.\(id)",
-                                        label: HealthProbeCatalog.label(id), type: t, unit: nil))
-        }
+        // seriesTypes and documentTypes are DELIBERATELY NOT SWEPT.
+        //
+        // The generic sweep below runs HKSampleQuery / HKSourceQuery against every
+        // entry. Neither of these families is a valid target for that:
+        //   - HKDocumentType (CDA) requires HKDocumentQuery, and it is the very
+        //     family whose presence in the authorization request already killed this
+        //     app once on 2026-07-24. Handing it to HKSampleQuery raises
+        //     NSInvalidArgumentException — an ObjC exception, so no Swift catch helps.
+        //   - HKSeriesType is likewise not a plain sample query target.
+        //
+        // Their resolution counts are already reported (documentResolved /
+        // seriesResolved), which is the finding; running the query adds a crash
+        // risk and no information.
+        _ = seriesTypes
+        _ = documentTypes
         for (k, label, t) in specials {
             work.append(HealthProbeWork(key: "health.special.\(k)", label: label, type: t, unit: nil))
         }
@@ -1404,7 +1411,9 @@ struct HealthProbe: TelemetryProbe {
                 degraded = true
             }
 
-            switch await HealthProbeHK.recentCount(store, type: type, days: 7, cap: 1000,
+            // cap 200, not 1000: this runs for EVERY one of ~200 swept types, so the
+            // worst case is 200 x cap objects alive across the task group.
+            switch await HealthProbeHK.recentCount(store, type: type, days: 7, cap: 200,
                                                    timeout: perQueryTimeout) {
             case .counted(let n, let capped):
                 extra["recent7dSampleCount"] = capped ? "\(ProbeEnv.int(n))+ (capped)" : ProbeEnv.int(n)
@@ -1509,7 +1518,12 @@ struct HealthProbe: TelemetryProbe {
 
     private func workoutItems(_ store: HKHealthStore, hardDeadline: Date) async -> [ProbeItem] {
         var out: [ProbeItem] = []
-        let cap = 10_000
+        // 500, not 10,000. Every returned HKWorkout is materialised in one array,
+        // and only counts, min/max dates and a duration sum are derived from it —
+        // so 10,000 objects buys nothing and risks a jetsam kill. A memory kill has
+        // exactly the signature the user already reported once ("the app just
+        // closes"): no dialog, no error, and not even a crash log.
+        let cap = 500
         let budget = max(4.0, min(25.0, hardDeadline.timeIntervalSinceNow - 30))
         let (rows, err, capped) = await HealthProbeHK.workouts(store, cap: cap, timeout: budget)
 
