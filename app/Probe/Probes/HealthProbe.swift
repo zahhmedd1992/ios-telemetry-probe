@@ -588,9 +588,26 @@ enum HealthProbeHK {
                             _ types: Set<HKObjectType>) async -> (Bool, String?) {
         await withCheckedContinuation { cont in
             let gate = HealthProbeGate()
-            store.requestAuthorization(toShare: Set<HKSampleType>(), read: types) { ok, err in
+            // HealthKit validates the requested type set SYNCHRONOUSLY and raises an
+            // Objective-C exception — not a Swift error — for any type the app is not
+            // permitted to ask about. Confirmed on device: a CDA document type in the
+            // read set produced
+            //   -[HKHealthStoreImplementation _throwIfAuthorizationDisallowedForSharing:types:]
+            // and SIGABRT'd the whole app before one section was reported.
+            //
+            // The throw happens before the completion handler is ever scheduled, so the
+            // continuation must be resumed on the failure path or the probe hangs forever.
+            var reason: NSString?
+            let completed = ProbeCatchNSException({
+                store.requestAuthorization(toShare: Set<HKSampleType>(), read: types) { ok, err in
+                    guard gate.claim() else { return }
+                    cont.resume(returning: (ok, err.map { errorText($0) }))
+                }
+            }, &reason)
+
+            if !completed {
                 guard gate.claim() else { return }
-                cont.resume(returning: (ok, err.map { errorText($0) }))
+                cont.resume(returning: (false, "Objective-C exception (caught): \(reason ?? "unknown")"))
             }
         }
     }
@@ -1077,7 +1094,12 @@ struct HealthProbe: TelemetryProbe {
         for (_, t) in characteristicTypes { readSet.insert(t) }
         for (_, t) in correlationTypes { readSet.insert(t) }
         for (_, t) in seriesTypes { readSet.insert(t) }
-        for (_, t) in documentTypes { readSet.insert(t) }
+        // documentTypes (HKDocumentTypeIdentifierCDA) are DELIBERATELY EXCLUDED from the
+        // main request. CDA documents belong to the health-records family, so asking for
+        // them without com.apple.developer.healthkit.access makes HealthKit raise rather
+        // than return an error — and one bad type poisons the entire batch, costing every
+        // other type in it. They are probed separately alongside clinical records, where a
+        // throw costs one item instead of the whole section.
         for (_, _, t) in specials { readSet.insert(t) }
         for (_, _, t) in nonSampleTypes { readSet.insert(t) }
         readSet.insert(HKObjectType.workoutType())

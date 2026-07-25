@@ -10,6 +10,12 @@ settings:
   base:
     SWIFT_VERSION: "5.0"
     SWIFT_STRICT_CONCURRENCY: minimal
+    # Mixed-language target. The ONLY Objective-C here is an exception-catching
+    # shim: Swift cannot catch an NSException, and a probe whose job is to poke
+    # every permission-gated framework will provoke one. (It did — HealthKit,
+    # on device, 2026-07-24.)
+    SWIFT_OBJC_BRIDGING_HEADER: Probe/ProbeBridging.h
+    CLANG_ENABLE_OBJC_ARC: YES
     TARGETED_DEVICE_FAMILY: "1,2"
     ENABLE_BITCODE: NO
     ENABLE_USER_SCRIPT_SANDBOXING: NO
@@ -102,6 +108,12 @@ targets:
         NSHealthUpdateUsageDescription: >-
           Probe requests write access only to test which Health categories
           are grantable. It does not write any samples.
+        # Required before ANY clinical-record or CDA-document type may appear in
+        # a HealthKit authorization request. Without it (and the matching
+        # entitlement) HealthKit raises an uncatchable ObjC exception.
+        NSHealthClinicalHealthRecordsShareUsageDescription: >-
+          Probe checks whether clinical health records are reachable on this
+          device. It reads no record contents and transmits nothing.
         NSMotionUsageDescription: >-
           Probe reads motion and fitness data to test step, floor, cadence
           and activity-classification history available on this device.

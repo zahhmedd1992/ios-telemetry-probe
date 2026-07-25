@@ -31,3 +31,7 @@ desktop.ini
 # Prior-art clones live in research/, never in the Swift sources dir
 research/prior-art/
 app/Probe/Probes/*/
+
+# Device crash logs contain crashReporterKey + Team ID. Never in a public repo.
+*.ips
+research/crashlog/

@@ -27,10 +27,16 @@ struct ContentView: View {
             .navigationTitle("Probe")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
+                // Labelled on purpose. A bare filter glyph here is unreadable —
+                // nobody should have to guess what a toolbar icon does.
                 ToolbarItem(placement: .topBarTrailing) {
                     Toggle(isOn: $showOnlyLive) {
-                        Image(systemName: showOnlyLive ? "line.3.horizontal.decrease.circle.fill"
-                                                       : "line.3.horizontal.decrease.circle")
+                        HStack(spacing: 4) {
+                            Image(systemName: showOnlyLive ? "line.3.horizontal.decrease.circle.fill"
+                                                           : "line.3.horizontal.decrease.circle")
+                            Text(showOnlyLive ? "Live only" : "Show all")
+                        }
+                        .font(.caption.weight(.semibold))
                     }
                     .toggleStyle(.button)
                     .tint(Palette.accent)
@@ -55,6 +61,21 @@ struct ContentView: View {
                 Chip(ProbeEnv.hardwareModel(), .gray)
                 Chip("\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)", .gray)
                 if ProbeEnv.isSimulator { Chip("SIMULATOR", .orange) }
+            }
+
+            if let died = ProbeCrumb.stale() {
+                VStack(alignment: .leading, spacing: 4) {
+                    Label("Previous run ended inside “\(died)”", systemImage: "exclamationmark.triangle.fill")
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(Palette.color(.partial))
+                    Text("Whatever finished before it was saved and is shown below. Re-running is safe.")
+                        .font(.caption2)
+                        .foregroundStyle(Palette.dim)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(10)
+                .background(Palette.color(.partial).opacity(0.12))
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             }
 
             Button {

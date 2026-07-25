@@ -246,6 +246,39 @@ func withProbeTimeout<T>(_ seconds: Double,
 
 // MARK: - Runner
 
+/// A single-file marker naming the probe currently executing.
+///
+/// An uncatchable Objective-C exception kills the process outright: no `defer`,
+/// no unwinding, no chance to record anything. Writing the marker BEFORE the
+/// probe runs and clearing it after means a stale marker on the next launch is
+/// proof of exactly which probe died — the diagnostic that would otherwise cost
+/// a crash-log round trip.
+enum ProbeCrumb {
+    private static var url: URL? {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
+            .first?.appendingPathComponent("running-probe.txt")
+    }
+
+    static func enter(_ key: String) {
+        guard let url else { return }
+        try? key.data(using: .utf8)?.write(to: url, options: .atomic)
+    }
+
+    static func leave() {
+        guard let url else { return }
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    /// Non-nil when the previous run died before finishing this probe.
+    static func stale() -> String? {
+        guard let url,
+              let d = try? Data(contentsOf: url),
+              let s = String(data: d, encoding: .utf8),
+              !s.isEmpty else { return nil }
+        return s
+    }
+}
+
 @MainActor
 final class ProbeRunner: ObservableObject {
     @Published var sections: [ProbeSection] = []
@@ -280,6 +313,12 @@ final class ProbeRunner: ObservableObject {
 
         for p in probes {
             progressLabel = p.title
+            // Breadcrumb first, report second. If a framework raises an uncatchable
+            // Objective-C exception the process dies mid-probe with no unwinding, so
+            // the ONLY evidence of which probe was running is what already reached
+            // disk. On the next launch this names the killer immediately.
+            ProbeCrumb.enter(p.key)
+
             let s = await withProbeTimeout(
                 180,
                 fallback: ProbeSection(
@@ -293,6 +332,11 @@ final class ProbeRunner: ObservableObject {
             }
             sections.append(s)
             completed += 1
+
+            // Persist after EVERY section. A crash now costs one section instead
+            // of the whole run — and the report is the entire point of this app.
+            _ = persist()
+            ProbeCrumb.leave()
         }
 
         progressLabel = ""

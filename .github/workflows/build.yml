@@ -100,7 +100,8 @@ jobs:
           import plistlib, sys
           pl = plistlib.load(open(sys.argv[1], 'rb'))
           required = [
-            'NSHealthShareUsageDescription','NSHealthUpdateUsageDescription','NSMotionUsageDescription',
+            'NSHealthShareUsageDescription','NSHealthUpdateUsageDescription',
+            'NSHealthClinicalHealthRecordsShareUsageDescription','NSMotionUsageDescription',
             'NSLocationWhenInUseUsageDescription','NSLocationAlwaysAndWhenInUseUsageDescription',
             'NSCalendarsFullAccessUsageDescription','NSCalendarsUsageDescription',
             'NSRemindersFullAccessUsageDescription','NSRemindersUsageDescription',
