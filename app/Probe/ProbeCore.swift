@@ -286,6 +286,30 @@ final class ProbeRunner: ObservableObject {
     @Published var progressLabel = ""
     @Published var completed = 0
     @Published var total = 0
+    /// True when `sections` came off disk from a previous, possibly crashed run.
+    @Published var restoredFromDisk = false
+
+    init() { restore() }
+
+    /// Reloads the last persisted report at launch.
+    ///
+    /// Without this, a run that dies mid-probe leaves a perfectly good partial
+    /// report on disk that the UI never shows and the Share button never offers —
+    /// the data exists and is unreachable, which is the worst of both. Observed
+    /// exactly that on 2026-07-24: the app crashed in MotionProbe with Entitlement
+    /// and Health already collected, and "Share wasn't an option".
+    func restore() {
+        guard sections.isEmpty,
+              let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
+        else { return }
+        let url = dir.appendingPathComponent("probe-report.json")
+        guard let data = try? Data(contentsOf: url) else { return }
+        let dec = JSONDecoder()
+        dec.dateDecodingStrategy = .iso8601
+        guard let report = try? dec.decode(ProbeReport.self, from: data) else { return }
+        sections = report.sections
+        restoredFromDisk = !report.sections.isEmpty
+    }
 
     /// Registration order is display order. Permission-prompting probes run
     /// first and sequentially, because iOS will only present one system

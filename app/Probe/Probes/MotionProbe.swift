@@ -1164,21 +1164,34 @@ struct MotionProbe: TelemetryProbe {
 
         // recordAccelerometer is synchronous and can block; keep it off-thread.
         let recordDuration: TimeInterval = 60
+        // CONFIRMED ON DEVICE 2026-07-24 (crash Probe-2026-07-24-202751): this call
+        // raises an Objective-C exception inside CoreMotion on iPhone and killed the
+        // app mid-report. It is not a Swift error, so do/catch cannot see it.
+        var recordThrow: NSString?
         let recorded = await MotionProbeUtil.offThread(5.0, fallback: false) {
-            recorder.recordAccelerometer(forDuration: recordDuration)
-            return true
+            var reason: NSString?
+            let completed = ProbeCatchNSException({
+                recorder.recordAccelerometer(forDuration: recordDuration)
+            }, &reason)
+            if !completed { recordThrow = reason }
+            return completed
         }
 
         out.append(ProbeItem(
             "motion.sensorRecorder.record",
             "CMSensorRecorder — recordAccelerometer(forDuration:)",
-            recAvail ? (recorded ? .ok : .error) : .unavailable,
-            value: recAvail
-                ? (recorded ? "accepted a \(Int(recordDuration))s recording request" : "call did not return in 5s")
-                : "not attempted meaningfully — recording unavailable",
-            detail: "The API returns Void and never reports failure, so 'accepted' means only that the call returned — it is not evidence that anything was written. The query below is the actual test. Note the asymmetry worth recording for a collector: you must arm recording BEFORE the window you want, so this API can never retrieve data from a period you did not anticipate.",
+            recordThrow != nil ? .denied : (recAvail ? (recorded ? .ok : .error) : .unavailable),
+            value: recordThrow != nil
+                ? "raised an Objective-C exception (caught)"
+                : (recAvail
+                    ? (recorded ? "accepted a \(Int(recordDuration))s recording request" : "call did not return in 5s")
+                    : "not attempted meaningfully — recording unavailable"),
+            detail: recordThrow != nil
+                ? "DEFINITIVE, measured on this iPhone: recordAccelerometer(forDuration:) does not merely fail — it RAISES, and the raise is an Objective-C exception no Swift catch can intercept. It killed this app mid-report on 2026-07-24 before the shim was added. Treat CMSensorRecorder as unavailable on iPhone and never call it from a collector: the 3-day 50 Hz background accelerometer log is an Apple Watch feature. Exception: \(recordThrow ?? "unknown")"
+                : "The API returns Void and never reports failure, so 'accepted' means only that the call returned — it is not evidence that anything was written. The query below is the actual test. Note the asymmetry worth recording for a collector: you must arm recording BEFORE the window you want, so this API can never retrieve data from a period you did not anticipate.",
             extra: ["requestedDurationSeconds": "\(Int(recordDuration))",
                     "callReturned": recorded ? "true" : "false",
+                    "objcException": (recordThrow as String?) ?? "none",
                     "returnsVoid": "true"]
         ))
 
@@ -1188,7 +1201,18 @@ struct MotionProbe: TelemetryProbe {
         fb.timedOut = true
         let q = await MotionProbeUtil.offThread(MotionProbe.recorderTimeout, fallback: fb) {
             var r = MotionProbeRecorderQuery()
-            guard let list = recorder.accelerometerData(from: from3, to: now) else {
+            // Same hazard as recordAccelerometer above — CoreMotion raises here too.
+            var listBox: CMSensorDataList?
+            var reason: NSString?
+            let completed = ProbeCatchNSException({
+                listBox = recorder.accelerometerData(from: from3, to: now)
+            }, &reason)
+            guard completed else {
+                r.listWasNil = true
+                r.threwReason = (reason as String?) ?? "Objective-C exception"
+                return r
+            }
+            guard let list = listBox else {
                 r.listWasNil = true
                 return r
             }
@@ -1441,6 +1465,8 @@ private struct MotionProbeRecorderQuery: Sendable {
     var listWasNil = true
     var truncated = false
     var timedOut = false
+    /// Non-nil when CoreMotion raised an Objective-C exception that the shim caught.
+    var threwReason: String?
 }
 
 private struct MotionProbeSampleStats: Sendable {
