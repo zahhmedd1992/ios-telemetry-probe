@@ -162,6 +162,71 @@ Two smaller ones:
 - **IExpress `/T:<dir> /C` extraction hangs without `/Q`.** 7-Zip handles the bundle directly and is
   the better tool.
 
+## First device run — 2026-07-24, 19:50. App SIGABRT'd on "Run full probe"
+
+Diagnosed from the on-device crash report, retrieved **without a Mac**: Zach shared it from
+Settings › Privacy & Security › Analytics & Improvements › Analytics Data to email, then
+`research/fetch_attachments.py <uid> <dir>` pulled the `.ips` off IMAP using the existing
+`~/.claude/scripts/gmail_tools.py` credentials. **This is the whole iOS-crash-debugging loop on a
+Windows box — reuse it.**
+
+### Killer #1 — HealthKit raises an Objective-C exception Swift cannot catch
+
+```
+HealthKit  -[HKHealthStoreImplementation _throwIfAuthorizationDisallowedForSharing:types:]
+libobjc    objc_exception_throw  →  abort()  →  SIGABRT
+```
+
+`requestAuthorization(toShare:read:)` validates the type set **synchronously** and calls
+`[NSException raise:]` for any type the app may not ask about. `HKDocumentTypeIdentifierCDA` was in
+the read set; CDA belongs to the health-records family and needs
+`com.apple.developer.healthkit.access`.
+
+Three things make this worse than it looks:
+
+1. **One bad type poisons the whole batch.** 215 types requested, one disallowed, nothing returns.
+2. **`do`/`catch` does not help.** Swift catches `Error`; this is an `NSException`. No Swift
+   construct stops it — the process dies with no unwinding.
+3. **The throw precedes the completion handler**, so a naive continuation never resumes → the probe
+   would hang even if the crash were survived.
+
+**Fix:** a 20-line Objective-C shim (`ProbeExceptionShim.h/.m` + `ProbeBridging.h`, wired via
+`SWIFT_OBJC_BRIDGING_HEADER`) exposing `ProbeCatchNSException(block, &reason)`. HealthKit auth now
+runs inside it, resumes the continuation on the failure path, and **reports the exception as a
+finding instead of dying from it**. CDA types were also pulled out of the main batch.
+
+### Killer #2 — SensorKit, found by audit before it ever fired
+
+`SRSensorReader.requestAuthorization` **terminates the process** unless `NSSensorKitUsageDetail`
+holds a correctly-shaped entry for *every* sensor requested: keys are `SRSensorUsage<Name>` and each
+value must be a **dictionary containing `Description`**. Ours were plain strings under `SRSensor<Name>`
+keys — wrong on both counts.
+
+This one is a **TCC kill, not an ObjC exception**, so the shim would not have caught it either.
+The call is now removed entirely: `authorizationStatus` answers the same question without asking,
+and the entitlement is study-scoped anyway. Plist shape corrected regardless.
+
+### Sideloadly rewrites the bundle ID
+
+Installed as **`com.zacharyahmed.telemetryprobe.8CA73CL7P6`** — the free-provisioning Team ID is
+appended. Matters because the app's data container is keyed to the bundle ID: change Apple ID and
+the container (and all collected history) is orphaned.
+
+### Never commit a crash log to a public repo
+
+`.ips` files carry `crashReporterKey` (device-stable) and the Team ID. One was committed and pushed;
+caught within 90 seconds, removed via `--amend` + `--force-with-lease`. `.gitignore` now excludes
+`*.ips` and `research/crashlog/`.
+
+### Structural fix: a crash must cost one section, not eleven
+
+- `persist()` now runs after **every** section, so a partial report always survives.
+- `ProbeCrumb` writes the running probe's key to disk *before* it runs and clears it after. A stale
+  crumb on next launch names the killer immediately — no crash-log round trip. Surfaced as a banner.
+- The CI Info.plist guard is only ever as complete as the key list fed to it. It passed 20/20 while
+  the app was crash-guaranteed, because the missing key wasn't on my list. **A guard that validates
+  your own assumptions cannot catch the assumption being wrong.**
+
 ## Open
 
 - 11 probe files being written; 5 done.
